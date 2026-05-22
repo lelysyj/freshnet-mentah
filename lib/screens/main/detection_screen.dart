@@ -1,12 +1,12 @@
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
-import '../../models/inspection_model.dart';
-import '../../services/history_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class _OL {
   static const primary = Color(0xFF003366);
@@ -23,7 +23,7 @@ class DetectionScreen extends StatefulWidget {
   const DetectionScreen({super.key});
 
   @override
-  _DetectionScreenState createState() => _DetectionScreenState();
+  State<DetectionScreen> createState() => _DetectionScreenState();
 }
 
 class _DetectionScreenState extends State<DetectionScreen> {
@@ -88,8 +88,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
   Future<void> _captureAndAnalyze() async {
     if (_controller == null ||
         !_controller!.value.isInitialized ||
-        _isProcessing)
-      return;
+        _isProcessing) return;
 
     setState(() => _isProcessing = true);
 
@@ -125,64 +124,71 @@ class _DetectionScreenState extends State<DetectionScreen> {
     }
   }
 
-  void _saveToHistory() {
+  Future<void> _saveToHistory() async {
     if (_resultLabel == null || imageFile == null || _savedToHistory) return;
 
-    final isEye = _resultLabel!.contains('eye');
+    try {
+      final bool isEye = _resultLabel!.contains('eye');
+      final bool safeIsFresh = _isFresh == true;
+      final double safeConfidence = (_confidence ?? 0.0).toDouble();
+      final String fishName = isEye ? 'Inspeksi Mata' : 'Inspeksi Insang';
+      final String freshnessLabel = safeIsFresh ? 'Segar' : 'Tidak Segar';
+      final String partLabel = isEye ? 'Mata' : 'Insang';
+      final String now = DateTime.now().toIso8601String();
 
-    final int generatedId = DateTime.now().millisecondsSinceEpoch;
-    final double safeConfidence = (_confidence ?? 0.0).toDouble();
-    final bool safeIsFresh = _isFresh == true;
-    final String now = DateTime.now().toIso8601String();
+      await FirebaseFirestore.instance.collection('history').add({
+        'fishName': fishName,
+        'confidence': safeConfidence,
+        'freshnessLabel': freshnessLabel,
+        'isFresh': safeIsFresh,
+        'partLabel': partLabel,
+        'eyeImagePath': isEye ? imageFile!.path : null,
+        'gillImagePath': !isEye ? imageFile!.path : null,
+        'inspectedAt': now,
+      });
 
-    final newItem = InspectionModel(
-      id: generatedId,
-      fishName: isEye ? 'Inspeksi Mata' : 'Inspeksi Insang',
-      confidence: safeConfidence,
-      resultLabel: _resultLabel ?? '',
-      isFresh: safeIsFresh,
-      eyeImagePath: isEye ? imageFile!.path : null,
-      gillImagePath: !isEye ? imageFile!.path : null,
-      inspectedAt: now,
-    );
+      setState(() => _savedToHistory = true);
 
-    InspectionStorage.add(newItem);
-
-    setState(() => _savedToHistory = true);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: const [
-            Icon(Icons.check_circle, color: Colors.white),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Hasil scan berhasil disimpan',
-                style: TextStyle(fontWeight: FontWeight.w600),
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Hasil scan berhasil disimpan',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
+          backgroundColor: const Color(0xFF0D1B3E),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: MediaQuery.of(context).padding.top + 40,
+            left: 20,
+            right: 20,
+            bottom: MediaQuery.of(context).size.height - 160,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          duration: const Duration(seconds: 2),
         ),
-        backgroundColor: const Color(0xFF0D1B3E),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: MediaQuery.of(context).padding.top + 40, // \
-          left: 20,
-          right: 20,
-          bottom: MediaQuery.of(context).size.height - 160, //
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal simpan history: $e')),
+      );
+    }
   }
 
   Future<void> _runInference(File file) async {
     if (interpreter == null) return;
 
-    // FIX 1: Gunakan readAsBytes() (async) bukan readAsBytesSync() untuk
-    // menghindari blocking UI thread
     final Uint8List imageData = await file.readAsBytes();
     img.Image? originalImage = img.decodeImage(imageData);
 
@@ -209,7 +215,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
     );
 
     final outputList = List.generate(1, (_) => List.filled(4, 0.0));
-
     interpreter!.run(inputList, outputList);
 
     final List<double> scores = List<double>.from(outputList[0]);
@@ -264,9 +269,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
               if (snapshot.connectionState == ConnectionState.done &&
                   _controller != null) {
                 return CameraPreview(_controller!);
-              } else {
-                return const Center(child: CircularProgressIndicator());
               }
+              return const Center(child: CircularProgressIndicator());
             },
           ),
         ),
@@ -326,6 +330,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
   Widget _buildResultView() {
     bool fresh = _isFresh ?? true;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -351,17 +356,14 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ],
             ),
           ),
+
           const SizedBox(height: 20),
+
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: fresh ? _OL.freshBg : const Color(0xFFFFECEC),
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: fresh
-                    ? _OL.accent.withOpacity(0.3)
-                    : _OL.danger.withOpacity(0.3),
-              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -380,7 +382,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
                     _badge("VERIFIED", fresh ? _OL.accent : _OL.danger),
                   ],
                 ),
+
                 const SizedBox(height: 12),
+
                 Text(
                   fresh ? "Segar" : "Tidak Segar",
                   style: TextStyle(
@@ -389,6 +393,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
                     color: fresh ? const Color(0xFF064E3B) : _OL.danger,
                   ),
                 ),
+
                 Text(
                   "Hasil deteksi berdasarkan analisis visual TFLite.",
                   style: TextStyle(
@@ -398,7 +403,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
                     fontSize: 13,
                   ),
                 ),
+
                 const SizedBox(height: 24),
+
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -419,7 +426,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
                     ),
                   ],
                 ),
+
                 const SizedBox(height: 8),
+
                 LinearProgressIndicator(
                   value: _confidence ?? 0,
                   backgroundColor: fresh
@@ -432,16 +441,23 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ],
             ),
           ),
+
           const SizedBox(height: 16),
+
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: fresh ? const Color(0xFFE6FFFA) : const Color(0xFFFFF5F5),
+              color: fresh
+                  ? const Color(0xFFE6FFFA)
+                  : const Color(0xFFFFF5F5),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Row(
               children: [
-                Icon(Icons.restaurant, color: fresh ? _OL.accent : _OL.danger),
+                Icon(
+                  Icons.restaurant,
+                  color: fresh ? _OL.accent : _OL.danger,
+                ),
                 const SizedBox(width: 12),
                 Text(
                   "REKOMENDASI: ${fresh ? "Layak Konsumsi" : "Hindari Konsumsi"}",
@@ -453,7 +469,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ],
             ),
           ),
+
           const SizedBox(height: 32),
+
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -476,7 +494,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ),
             ),
           ),
+
           const SizedBox(height: 12),
+
           SizedBox(
             width: double.infinity,
             child: OutlinedButton(

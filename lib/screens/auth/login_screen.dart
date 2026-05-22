@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../services/api_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -10,7 +10,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _usernameCtrl = TextEditingController();
+
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
   bool _obscurePassword = true;
@@ -18,94 +19,94 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _usernameCtrl.dispose();
+    _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _handleLogin() async {
-    final username = _usernameCtrl.text.trim();
+
+    final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
 
-    if (username.isEmpty || password.isEmpty) {
+    if (email.isEmpty || password.isEmpty) {
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: const [
-              Icon(Icons.warning_amber_rounded, color: Colors.white),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Username dan password wajib diisi',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: const Color(0xFFCC2929),
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            top: MediaQuery.of(context).padding.top + 16,
-            left: 20,
-            right: 20,
-            bottom: MediaQuery.of(context).size.height - 120,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
+        const SnackBar(
+          content: Text('Email dan password wajib diisi'),
+          backgroundColor: Colors.red,
         ),
       );
+
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+    });
 
-    await Future.delayed(const Duration(milliseconds: 700));
-    await ApiService.saveToken('dummy_token');
+    try {
 
-    if (!mounted) return;
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    setState(() => _isLoading = false);
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: const [
-            Icon(Icons.check_circle, color: Colors.white),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Login berhasil',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Login berhasil'),
+          backgroundColor: Colors.green,
         ),
-        backgroundColor: const Color(0xFF0D1B3E),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: MediaQuery.of(context).padding.top + 40, // 👈 diturunin dikit
-          left: 20,
-          right: 20,
-          bottom: MediaQuery.of(context).size.height - 160, // 👈 sedikit turun
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
+      );
 
-    Navigator.pushReplacementNamed(context, '/home');
+      Navigator.pushReplacementNamed(context, '/home');
+
+    } on FirebaseAuthException catch (e) {
+
+      String message = 'Login gagal';
+
+      if (e.code == 'user-not-found') {
+        message = 'User tidak ditemukan';
+      } else if (e.code == 'wrong-password') {
+        message = 'Password salah';
+      } else if (e.code == 'invalid-email') {
+        message = 'Format email tidak valid';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+
+    } finally {
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
       backgroundColor: const Color(0xFFF3F6FB),
+
       body: SafeArea(
         child: SingleChildScrollView(
+
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+
               const SizedBox(height: 24),
 
               /// LOGO
@@ -113,12 +114,18 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Container(
                   width: 82,
                   height: 82,
+
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
-                      colors: [Color(0xFF0D1B3E), Color(0xFF1A4FA0)],
+                      colors: [
+                        Color(0xFF0D1B3E),
+                        Color(0xFF1A4FA0),
+                      ],
                     ),
+
                     borderRadius: BorderRadius.circular(24),
                   ),
+
                   child: const Icon(
                     Icons.set_meal,
                     color: Colors.white,
@@ -133,6 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const Center(
                 child: Text(
                   'FRESHNET',
+
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w800,
@@ -146,8 +154,13 @@ class _LoginScreenState extends State<LoginScreen> {
               const Center(
                 child: Text(
                   'Sistem deteksi kesegaran ikan berbasis AI',
+
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: Color(0xFF6B7A90)),
+
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF6B7A90),
+                  ),
                 ),
               ),
 
@@ -155,16 +168,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
               /// CARD LOGIN
               Container(
+
                 padding: const EdgeInsets.all(22),
+
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(22),
                 ),
+
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+
                     const Text(
                       'Masuk ke Akun',
+
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -173,14 +191,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     const SizedBox(height: 20),
 
-                    /// USERNAME
+                    /// EMAIL
                     TextField(
-                      controller: _usernameCtrl,
+
+                      controller: _emailCtrl,
+
                       decoration: InputDecoration(
-                        hintText: 'Username',
-                        prefixIcon: const Icon(Icons.person),
+                        hintText: 'Email',
+
+                        prefixIcon: const Icon(Icons.email),
+
                         filled: true,
                         fillColor: const Color(0xFFF7F9FC),
+
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
                           borderSide: BorderSide.none,
@@ -192,25 +215,35 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     /// PASSWORD
                     TextField(
+
                       controller: _passwordCtrl,
+
                       obscureText: _obscurePassword,
+
                       decoration: InputDecoration(
                         hintText: 'Password',
+
                         prefixIcon: const Icon(Icons.lock),
+
                         suffixIcon: IconButton(
+
                           icon: Icon(
                             _obscurePassword
                                 ? Icons.visibility_off
                                 : Icons.visibility,
                           ),
+
                           onPressed: () {
+
                             setState(() {
                               _obscurePassword = !_obscurePassword;
                             });
                           },
                         ),
+
                         filled: true,
                         fillColor: const Color(0xFFF7F9FC),
+
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
                           borderSide: BorderSide.none,
@@ -222,13 +255,23 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     /// BUTTON LOGIN
                     SizedBox(
+
                       width: double.infinity,
+
                       child: ElevatedButton(
-                        onPressed: _isLoading ? null : _handleLogin,
+
+                        onPressed: _isLoading
+                            ? null
+                            : _handleLogin,
+
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF0D1B3E),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
+
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 16,
+                          ),
                         ),
+
                         child: _isLoading
                             ? const CircularProgressIndicator(
                                 color: Colors.white,
@@ -241,18 +284,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     /// REGISTER LINK
                     Row(
+
                       mainAxisAlignment: MainAxisAlignment.center,
+
                       children: [
+
                         const Text('Belum punya akun?'),
+
                         TextButton(
+
                           onPressed: () {
+
                             Navigator.push(
                               context,
+
                               MaterialPageRoute(
                                 builder: (_) => const RegisterScreen(),
                               ),
                             );
                           },
+
                           child: const Text('Daftar'),
                         ),
                       ],

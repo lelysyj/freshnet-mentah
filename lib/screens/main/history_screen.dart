@@ -1,13 +1,15 @@
-import 'dart:io'; 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import '../../models/inspection_model.dart';
-import '../../services/history_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'inspection_model.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
 
   @override
-  _HistoryScreenState createState() => _HistoryScreenState();
+  State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
@@ -23,10 +25,30 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    setState(() {
-      _items = InspectionStorage.getAll().toList();
-      _loading = false;
-    });
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('history')
+          .orderBy('inspectedAt', descending: true)
+          .get();
+
+      final data = snapshot.docs.map<InspectionModel>((doc) {
+        final json = doc.data();
+        return InspectionModel.fromJson(json, doc.id);
+      }).toList();
+
+      setState(() {
+        _items = data;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal load history: $e')),
+        );
+      }
+    }
   }
 
   List<InspectionModel> get _filtered {
@@ -37,6 +59,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Future<void> _delete(InspectionModel item) async {
     if (item.id == null) return;
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -58,27 +81,39 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ],
       ),
     );
+
     if (confirm == true) {
-      InspectionStorage.remove(item.id!);
-      _load();
+      await FirebaseFirestore.instance
+          .collection('history')
+          .doc(item.id!)
+          .delete();
+      await _load();
     }
   }
 
-  String _formatDate(String iso) {
+  String _formatDate(dynamic value) {
     try {
-      final dt = DateTime.parse(iso).toLocal();
+      DateTime dt;
+      if (value is Timestamp) {
+        dt = value.toDate().toLocal();
+      } else {
+        dt = DateTime.parse(value.toString()).toLocal();
+      }
+
       final months = [
         '', 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
         'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
       ];
+
       final day = dt.day.toString().padLeft(2, '0');
       final month = months[dt.month];
       final year = dt.year;
       final hour = dt.hour.toString().padLeft(2, '0');
       final minute = dt.minute.toString().padLeft(2, '0');
+
       return '$day $month $year, $hour:$minute';
     } catch (_) {
-      return iso;
+      return value.toString();
     }
   }
 
@@ -90,7 +125,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         title: const Text(
-          "FRESHNET",
+          'FRESHNET',
           style: TextStyle(
             color: Color(0xFF0D1B3E),
             fontWeight: FontWeight.bold,
@@ -99,41 +134,29 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
         ),
         centerTitle: true,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: const SizedBox(),
-          ),
-        ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(color: Color(0xFF0D1B3E)),
-                  )
-                : RefreshIndicator(
-                    onRefresh: _load,
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
-                      children: [
-                        _buildHeader(),
-                        const SizedBox(height: 20),
-                        _buildStatCards(),
-                        const SizedBox(height: 24),
-                        _buildFilterBar(),
-                        const SizedBox(height: 16),
-                        if (_filtered.isEmpty)
-                          _buildEmpty()
-                        else
-                          ..._filtered.map((item) => _buildCard(item)).toList(),
-                      ],
-                    ),
-                  ),
-          ),
-        ],
-      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF0D1B3E)),
+            )
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+                children: [
+                  _buildHeader(),
+                  const SizedBox(height: 20),
+                  _buildStatCards(),
+                  const SizedBox(height: 24),
+                  _buildFilterBar(),
+                  const SizedBox(height: 16),
+                  if (_filtered.isEmpty)
+                    _buildEmpty()
+                  else
+                    ..._filtered.map((item) => _buildCard(item)).toList(),
+                ],
+              ),
+            ),
     );
   }
 
@@ -157,20 +180,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
           ),
           child: IconButton(
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: Color(0xFF0D1B3E),
-              size: 20,
-            ),
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF0D1B3E)),
             onPressed: _load,
           ),
         ),
@@ -181,7 +193,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildStatCards() {
     final fresh = _items.where((e) => e.isFresh).length;
     final nonFresh = _items.length - fresh;
-    final freshPct = _items.isEmpty ? 0 : ((fresh / _items.length) * 100).round();
+    final freshPct = _items.isEmpty
+        ? 0
+        : ((fresh / _items.length) * 100).round();
     final nonFreshPct = _items.isEmpty ? 0 : 100 - freshPct;
 
     return Column(
@@ -195,11 +209,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               color: const Color(0xFFEEF2F8),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(
-              Icons.archive_outlined,
-              color: Color(0xFF8A9BB5),
-              size: 22,
-            ),
+            child: const Icon(Icons.archive_outlined, color: Color(0xFF8A9BB5)),
           ),
         ),
         const SizedBox(height: 12),
@@ -259,138 +269,63 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildCard(InspectionModel item) {
     final isFresh = item.isFresh;
-    final badgeColor = isFresh ? const Color(0xFF0A7A5A) : const Color(0xFFCC2929);
-    final badgeBg = isFresh ? const Color(0xFFD6F5E9) : const Color(0xFFFAD4D4);
+    final badgeColor =
+        isFresh ? const Color(0xFF0A7A5A) : const Color(0xFFCC2929);
+    final badgeBg =
+        isFresh ? const Color(0xFFD6F5E9) : const Color(0xFFFAD4D4);
 
-    return GestureDetector(
-      onTap: () => _showDetail(item),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: ListTile(
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 60,
+            height: 60,
+            child: _buildThumbnail(item),
+          ),
+        ),
+        title: Text(
+          item.fishName,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0D1B3E),
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 6),
+            Text(
+              _formatDate(item.inspectedAt),
+              style: const TextStyle(color: Color(0xFF8A9BB5), fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: badgeBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                item.freshnessLabel.toUpperCase(),
+                style: TextStyle(
+                  color: badgeColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              // Fish image
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  color: const Color(0xFF0D1220),
-                  child: _buildThumbnail(item),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.fishName,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF0D1B3E),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '${(item.confidence * 100).toStringAsFixed(1)}%',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF0D1B3E),
-                              ),
-                            ),
-                            const Text(
-                              'CONFIDENCE',
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: Color(0xFF8A9BB5),
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: badgeBg,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            item.freshnessLabel.toUpperCase(),
-                            style: TextStyle(
-                              color: badgeColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.4,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _formatDate(item.inspectedAt),
-                            style: const TextStyle(
-                              color: Color(0xFF8A9BB5),
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                children: [
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: Color(0xFFCCD5E3),
-                    size: 22,
-                  ),
-                  const SizedBox(height: 12),
-                  GestureDetector(
-                    onTap: () => _delete(item),
-                    child: const Icon(
-                      Icons.delete_outline,
-                      color: Color(0xFFCCD5E3),
-                      size: 18,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline, color: Color(0xFFCC2929)),
+          onPressed: () => _delete(item),
         ),
       ),
     );
@@ -398,128 +333,38 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildThumbnail(InspectionModel item) {
     final path = item.eyeImagePath ?? item.gillImagePath;
+
     if (path == null) {
-      return const Icon(Icons.set_meal, color: Colors.white54, size: 32);
+      return Container(
+        color: const Color(0xFFEEF2F8),
+        child: const Icon(Icons.set_meal, color: Color(0xFF8A9BB5)),
+      );
     }
+
     if (path.startsWith('http')) {
       return Image.network(
         path,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) =>
-            const Icon(Icons.set_meal, color: Colors.white54, size: 32),
-      );
-    } else {
-      return Image.file(
-        File(path),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) =>
-            const Icon(Icons.set_meal, color: Colors.white54, size: 32),
+        errorBuilder: (_, __, ___) => Container(
+          color: const Color(0xFFEEF2F8),
+          child: const Icon(Icons.broken_image, color: Color(0xFF8A9BB5)),
+        ),
       );
     }
-  }
 
-  void _showDetail(InspectionModel item) {
-    final isFresh = item.isFresh;
-    final badgeColor = isFresh ? const Color(0xFF0A7A5A) : const Color(0xFFCC2929);
-    final badgeBg = isFresh ? const Color(0xFFD6F5E9) : const Color(0xFFFAD4D4);
-    final path = item.eyeImagePath ?? item.gillImagePath;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    final file = File(path);
+    if (!file.existsSync()) {
+      return Container(
+        color: const Color(0xFFEEF2F8),
+        child: const Icon(
+          Icons.image_not_supported,
+          color: Color(0xFF8A9BB5),
         ),
-        child: DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.65,
-          builder: (_, ctrl) => SingleChildScrollView(
-            controller: ctrl,
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFDDE3EF),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Preview gambar
-                if (path != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 180,
-                      child: path.startsWith('http')
-                          ? Image.network(path, fit: BoxFit.cover)
-                          : Image.file(File(path), fit: BoxFit.cover),
-                    ),
-                  ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.fishName,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0D1B3E),
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeBg,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        item.freshnessLabel.toUpperCase(),
-                        style: TextStyle(
-                          color: badgeColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                _detailDivider(),
-                _DetailRow('Bagian Diperiksa', item.partLabel),
-                _detailDivider(),
-                _DetailRow(
-                  'Confidence',
-                  '${(item.confidence * 100).toStringAsFixed(2)}%',
-                ),
-                _detailDivider(),
-                _DetailRow('Layak Konsumsi', item.isFresh ? 'Ya ✅' : 'Tidak ❌'),
-                _detailDivider(),
-                _DetailRow('Tanggal Periksa', _formatDate(item.inspectedAt)),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+      );
+    }
 
-  Widget _detailDivider() =>
-      const Divider(color: Color(0xFFEEF2F8), thickness: 1, height: 1);
+    return Image.file(file, fit: BoxFit.cover);
+  }
 
   Widget _buildEmpty() {
     return SizedBox(
@@ -546,21 +391,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
               'Belum ada riwayat pemeriksaan',
               style: TextStyle(color: Color(0xFF8A9BB5), fontSize: 14),
             ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: _load,
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF0D1B3E),
-              ),
-              child: const Text('Muat Ulang'),
-            ),
           ],
         ),
       ),
     );
   }
 }
-
 
 class _StatCard extends StatelessWidget {
   final String label;
@@ -585,13 +421,6 @@ class _StatCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Row(
         children: [
@@ -605,7 +434,6 @@ class _StatCard extends StatelessWidget {
                     fontSize: 11,
                     color: Color(0xFF8A9BB5),
                     fontWeight: FontWeight.w600,
-                    letterSpacing: 1.0,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -615,7 +443,6 @@ class _StatCard extends StatelessWidget {
                     fontSize: 36,
                     fontWeight: FontWeight.bold,
                     color: valueColor,
-                    height: 1.0,
                   ),
                 ),
               ],
@@ -682,13 +509,6 @@ class _FilterPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? activeColor : Colors.white,
           borderRadius: BorderRadius.circular(30),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
         child: Text(
           label,
@@ -698,37 +518,6 @@ class _FilterPill extends StatelessWidget {
             fontSize: 13,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _DetailRow(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: Color(0xFF8A9BB5), fontSize: 13),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF0D1B3E),
-              fontSize: 13,
-            ),
-          ),
-        ],
       ),
     );
   }
