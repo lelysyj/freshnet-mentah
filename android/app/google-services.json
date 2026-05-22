@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "89947364484",
+    "project_id": "freshnet-e0c44",
+    "storage_bucket": "freshnet-e0c44.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:89947364484:android:ba021c8bf9c8ec6b81b6d1",
+        "android_client_info": {
+          "package_name": "com.example.fish_freshness_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAMKIHuPMiPlq5VPQTmdwQjfh8lyLoEtDw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
